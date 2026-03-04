@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Hominventory",
-  description: "Home inventory tracker with barcode scanning",
+  description: "Home inventory tracker with barcode scanning.",
 };
 
 export default function RootLayout({ children }) {
