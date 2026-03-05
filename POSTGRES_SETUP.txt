@@ -1,0 +1,49 @@
+Postgres Setup
+==============
+
+By default Hominventory stores data in a local SQLite file (inventory.db).
+To use an external Postgres database instead, follow these steps:
+
+1. Create a Postgres database
+   --------------------------
+   Using psql or any Postgres client:
+
+     CREATE DATABASE hominventory;
+
+   (Use any name you like.)
+
+2. Set the DATABASE_URL environment variable
+   ------------------------------------------
+   Copy .env.example to .env and fill in your connection string:
+
+     cp .env.example .env
+
+   Then edit .env:
+
+     DATABASE_URL=postgresql://user:password@localhost:5432/hominventory
+
+   Replace user, password, host, port, and database name as needed.
+   SSL example (common for hosted providers):
+
+     DATABASE_URL=postgresql://user:password@host:5432/hominventory?sslmode=require
+
+3. Install dependencies
+   ---------------------
+
+     npm install
+
+4. Start the app
+   --------------
+
+     npm run dev      # development
+     npm run build && npm start   # production
+
+   The app auto-creates the required tables and indexes on first request.
+   No manual migration step is needed.
+
+Notes
+-----
+- When DATABASE_URL is unset or empty, the app falls back to SQLite automatically.
+- Both backends share the same schema; you can switch freely by toggling the variable.
+- The pg package is only loaded when DATABASE_URL points to Postgres, so it adds
+  zero overhead when running in SQLite mode.
