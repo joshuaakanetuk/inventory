@@ -11,8 +11,27 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-// ─── Open Food Facts lookup ─────────────────────────────────────────────
-async function lookupBarcode(barcode) {
+// ─── Barcode lookup helpers ──────────────────────────────────────────────
+
+// Open Library — best for books (ISBN-13 barcodes start with 978 or 979)
+async function lookupOpenLibrary(barcode) {
+  try {
+    const res = await fetch(
+      `https://openlibrary.org/isbn/${barcode}.json`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.title) {
+      return { name: data.title, source: "Open Library" };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Open Food Facts — good for food / grocery items
+async function lookupOpenFoodFacts(barcode) {
   try {
     const res = await fetch(
       `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`
@@ -20,12 +39,88 @@ async function lookupBarcode(barcode) {
     if (!res.ok) return null;
     const data = await res.json();
     if (data.status === 1 && data.product) {
-      return data.product.product_name || data.product.product_name_en || null;
+      const name = data.product.product_name || data.product.product_name_en || null;
+      return name ? { name, source: "Open Food Facts" } : null;
     }
     return null;
   } catch {
     return null;
   }
+}
+
+// UPCitemdb — general product database (movies, electronics, etc.)
+async function lookupUPCitemdb(barcode) {
+  try {
+    const res = await fetch(
+      `https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.items && data.items.length > 0) {
+      const item = data.items[0];
+      const name = item.title || item.description || null;
+      if (!name) return null;
+      // Detect if this looks like a movie / film / TV media
+      const category = (item.category || "").toLowerCase();
+      const titleLower = name.toLowerCase();
+      const isMedia =
+        category.includes("movie") || category.includes("dvd") ||
+        category.includes("blu-ray") || category.includes("video") ||
+        category.includes("film") || titleLower.includes("dvd") ||
+        titleLower.includes("blu-ray") || titleLower.includes("blu ray");
+      return { name, source: "UPCitemdb", isMedia };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// TMDB — search for movie/TV by title for richer metadata
+async function lookupTMDB(title) {
+  try {
+    // Use the API route proxy to avoid exposing API keys client-side
+    const res = await fetch(
+      `/api/tmdb?query=${encodeURIComponent(title)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.name) {
+      return { name: data.name, source: "TMDB" };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Cascading lookup — tries sources in order, reports progress
+async function lookupBarcode(barcode, onProgress) {
+  const isISBN = /^(978|979)/.test(barcode);
+
+  // Build the lookup cascade based on barcode type
+  const steps = [];
+  if (isISBN) {
+    steps.push({ label: "Open Library", fn: () => lookupOpenLibrary(barcode) });
+  }
+  steps.push({ label: "Open Food Facts", fn: () => lookupOpenFoodFacts(barcode) });
+  steps.push({ label: "UPCitemdb", fn: () => lookupUPCitemdb(barcode) });
+
+  for (const step of steps) {
+    if (onProgress) onProgress(step.label);
+    const result = await step.fn();
+    if (result) {
+      // If UPCitemdb found media, try TMDB for a better name
+      if (result.isMedia) {
+        if (onProgress) onProgress("TMDB");
+        const tmdbResult = await lookupTMDB(result.name);
+        if (tmdbResult) return tmdbResult;
+      }
+      return result;
+    }
+  }
+
+  return null;
 }
 
 // ─── Export helpers ─────────────────────────────────────────────────────
@@ -360,6 +455,8 @@ function InventoryScreen({ user, items, onRefresh, onLogout }) {
   const [manualName, setManualName] = useState("");
   const [search, setSearch] = useState("");
   const [lookupStatus, setLookupStatus] = useState(null);
+  const [lookupSource, setLookupSource] = useState(null);
+  const [lookupChecking, setLookupChecking] = useState(null);
   const [pendingBarcode, setPendingBarcode] = useState(null);
   const [pendingName, setPendingName] = useState("");
   const [showManual, setShowManual] = useState(false);
@@ -403,16 +500,20 @@ function InventoryScreen({ user, items, onRefresh, onLogout }) {
       await api(`items?id=${result.item.id}`, { method: "DELETE" });
 
       setLookupStatus("looking");
+      setLookupSource(null);
+      setLookupChecking(null);
       setPendingBarcode(val);
       setScanInput("");
-      const name = await lookupBarcode(val);
-      if (name) {
-        setPendingName(name);
+      const lookupResult = await lookupBarcode(val, (source) => setLookupChecking(source));
+      if (lookupResult) {
+        setPendingName(lookupResult.name);
+        setLookupSource(lookupResult.source);
         setLookupStatus("found");
       } else {
         setPendingName("");
         setLookupStatus("notfound");
       }
+      setLookupChecking(null);
     } else {
       await api("items", {
         method: "POST",
@@ -435,6 +536,8 @@ function InventoryScreen({ user, items, onRefresh, onLogout }) {
     setPendingBarcode(null);
     setPendingName("");
     setLookupStatus(null);
+    setLookupSource(null);
+    setLookupChecking(null);
     onRefresh();
   };
 
@@ -442,6 +545,8 @@ function InventoryScreen({ user, items, onRefresh, onLogout }) {
     setPendingBarcode(null);
     setPendingName("");
     setLookupStatus(null);
+    setLookupSource(null);
+    setLookupChecking(null);
   };
 
   const handleQtyChange = async (id, delta) => {
@@ -542,7 +647,7 @@ function InventoryScreen({ user, items, onRefresh, onLogout }) {
               style={{ ...S.input, fontSize: 18, fontFamily: "'JetBrains Mono', monospace", background: P.bg }}
               autoComplete="off" autoCorrect="off" inputMode="text" />
             <div style={{ fontSize: 12, color: P.textDim, marginTop: 8 }}>
-              Numeric input → barcode lookup &nbsp;|&nbsp; Text → adds as item name
+              Numeric input → looks up books, food, movies &nbsp;|&nbsp; Text → adds as item name
             </div>
           </div>
         )}
@@ -553,11 +658,23 @@ function InventoryScreen({ user, items, onRefresh, onLogout }) {
             ...S.card,
             borderColor: lookupStatus === "looking" ? P.warn : lookupStatus === "found" ? P.accent : P.danger,
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <span style={S.badge}>{pendingBarcode}</span>
-              {lookupStatus === "looking" && <span style={{ color: P.warn, fontSize: 14 }}>Looking up…</span>}
-              {lookupStatus === "found" && <span style={{ color: P.accent, fontSize: 14 }}>✓ Found</span>}
-              {lookupStatus === "notfound" && <span style={{ color: P.danger, fontSize: 14 }}>Not found — enter name manually</span>}
+              {lookupStatus === "looking" && (
+                <span style={{ color: P.warn, fontSize: 14 }}>
+                  Checking {lookupChecking || "…"}
+                </span>
+              )}
+              {lookupStatus === "found" && (
+                <span style={{ color: P.accent, fontSize: 14 }}>
+                  ✓ Found via {lookupSource}
+                </span>
+              )}
+              {lookupStatus === "notfound" && (
+                <span style={{ color: P.danger, fontSize: 14 }}>
+                  Not found — enter name manually
+                </span>
+              )}
             </div>
             {lookupStatus !== "looking" && (
               <>
