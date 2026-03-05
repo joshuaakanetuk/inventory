@@ -69,9 +69,7 @@ export async function PUT(request) {
     );
   }
 
-  // GREATEST works in Postgres; in SQLite 3.35+ MAX works the same way.
-  // Both support MAX() in this context.
-  await run("UPDATE items SET qty = MAX(0, qty + ?) WHERE id = ?", [delta, id]);
+  await run("UPDATE items SET qty = GREATEST(0, qty + ?) WHERE id = ?", [delta, id]);
 
   const item = await queryOne("SELECT * FROM items WHERE id = ?", [id]);
   return NextResponse.json(item);

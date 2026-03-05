@@ -6,6 +6,7 @@ const USE_PG = DATABASE_URL && DATABASE_URL.startsWith("postgres");
 
 let sqliteDb;
 let pgPool;
+let pgInitPromise;
 
 // --------------- SQLite helpers ---------------
 
@@ -39,33 +40,41 @@ function getSqliteDb() {
 
 // --------------- Postgres helpers ---------------
 
-async function getPgPool() {
-  if (!pgPool) {
-    const { default: pg } = await import("pg");
-    pgPool = new pg.Pool({ connectionString: DATABASE_URL });
+async function initPgPool() {
+  const { default: pg } = await import("pg");
+  const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
-    await pgPool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    await pgPool.query(`
-      CREATE TABLE IF NOT EXISTS items (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        barcode TEXT,
-        qty INTEGER NOT NULL DEFAULT 1,
-        added_by TEXT NOT NULL,
-        added_at TIMESTAMPTZ DEFAULT NOW(),
-        FOREIGN KEY (added_by) REFERENCES users(name)
-      );
-    `);
-    await pgPool.query(`CREATE INDEX IF NOT EXISTS idx_items_barcode ON items(barcode);`);
-    await pgPool.query(`CREATE INDEX IF NOT EXISTS idx_items_added_by ON items(added_by);`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS items (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      barcode TEXT,
+      qty INTEGER NOT NULL DEFAULT 1,
+      added_by TEXT NOT NULL,
+      added_at TIMESTAMPTZ DEFAULT NOW(),
+      FOREIGN KEY (added_by) REFERENCES users(name)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_items_barcode ON items(barcode);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_items_added_by ON items(added_by);`);
+
+  pgPool = pool;
+  return pool;
+}
+
+async function getPgPool() {
+  if (pgPool) return pgPool;
+  if (!pgInitPromise) {
+    pgInitPromise = initPgPool();
   }
-  return pgPool;
+  return pgInitPromise;
 }
 
 // Convert SQLite-style "?" placeholders to Postgres "$1, $2, ..."
