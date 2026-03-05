@@ -1,0 +1,17 @@
+{
+  "name": "Hominventory",
+  "short_name": "Inventory",
+  "description": "Home inventory tracker with barcode scanning",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1114",
+  "theme_color": "#0f1114",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
