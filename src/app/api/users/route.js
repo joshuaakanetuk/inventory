@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { query, run } from "@/lib/db";
 
-export function GET() {
-  const db = getDb();
-  const users = db.prepare("SELECT name FROM users ORDER BY name").all();
+export async function GET() {
+  const users = await query("SELECT name FROM users ORDER BY name");
   return NextResponse.json(users.map((u) => u.name));
 }
 
@@ -13,13 +12,16 @@ export async function POST(request) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
 
-  const db = getDb();
   try {
-    db.prepare("INSERT INTO users (name) VALUES (?)").run(name.trim());
+    await run("INSERT INTO users (name) VALUES (?)", [name.trim()]);
     return NextResponse.json({ name: name.trim() }, { status: 201 });
   } catch (err) {
-    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
-      return NextResponse.json({ error: "User already exists" }, { status: 409 });
+    // SQLite: SQLITE_CONSTRAINT_UNIQUE, Postgres: error code 23505
+    if (err.code === "SQLITE_CONSTRAINT_UNIQUE" || err.code === "23505") {
+      return NextResponse.json(
+        { error: "User already exists" },
+        { status: 409 }
+      );
     }
     throw err;
   }
